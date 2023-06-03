@@ -107,3 +107,5 @@ struct proc {
 
   uint64 tracemask;
 };
+
+uint64 nproc(void);
