@@ -503,3 +503,40 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_pgaccess(void)
+{
+  uint64 va, ubitmap;
+  int count;
+  unsigned int kbitmap = 0;
+  pte_t *pte;
+  struct proc *p = myproc();
+
+  argaddr(0, &va);
+  argint(1, &count);
+  argaddr(2, &ubitmap);
+
+  if (count < 0 || count > 32) {
+    return -1;
+  }
+
+  for (int i = 0; i < count; i++) {
+    pte = walk(p->pagetable, va + i * PGSIZE, 0);
+    if (pte == 0) {
+      return -1;
+    }
+
+    if (*pte & PTE_A) {
+      printf("A: %p (%d)\n", pte, i);
+      kbitmap |= (1 << i);
+      *pte &= ~PTE_A;
+    }
+  }
+
+  if (copyout(p->pagetable, ubitmap, (char *) &kbitmap, sizeof(kbitmap)) < 0) {
+    return -1;
+  }
+
+  return 0;
+}
