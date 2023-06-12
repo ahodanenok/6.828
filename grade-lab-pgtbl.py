@@ -60,15 +60,15 @@ def test_answers():
     # just a simple sanity check, will be graded manually
     check_answers("answers-pgtbl.txt")
 
-# @test(0, "usertests")
-# def test_usertests():
-#     r.run_qemu(shell_script([
-#         'usertests -q'
-#     ]), timeout=300)
+@test(0, "usertests")
+def test_usertests():
+    r.run_qemu(shell_script([
+        'usertests -q'
+    ]), timeout=300)
 
-# @test(10, "usertests: all tests", parent=test_usertests)
-# def test_usertests():
-#     r.match('^ALL TESTS PASSED$')
+@test(10, "usertests: all tests", parent=test_usertests)
+def test_usertests():
+    r.match('^ALL TESTS PASSED$')
 
 @test(1, "time")
 def test_time():
