@@ -17,6 +17,8 @@
 
 volatile int panicked = 0;
 
+extern pagetable_t kernel_pagetable;
+
 // lock to avoid interleaving concurrent printf's.
 static struct {
   struct spinlock lock;
@@ -132,4 +134,15 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void
+backtrace(void)
+{
+  uint64 fp = r_fp();
+  uint64 pp = PGROUNDDOWN(fp);
+  while (PGROUNDDOWN(fp) == pp) {
+    printf("%p\n", *((uint64 *) (fp - 8)));
+    fp = *((uint64 *) (fp - 16));
+  }
 }
