@@ -29,6 +29,35 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+static void
+cowtrap(void)
+{
+  struct proc *p = myproc();
+
+  uint64 va = PGROUNDDOWN(r_stval());
+  if(va >= MAXVA) {
+    setkilled(p);
+    return;
+  }
+
+  pte_t *pte = walk(p->pagetable, va, 0);
+  if (pte == 0) {
+    setkilled(p);
+    return;
+  }
+
+  if (*pte & PTE_COW) {
+    if (cowcow(p->pagetable, va, pte) == 0) {
+      printf("usertrap(): failed to remap cow page pid=%d va=%p pte=%p\n", p->pid, r_stval(), *pte);
+      setkilled(p);
+    }
+  } else {
+    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    printf("            sepc=%p stval=%p pte=%p\n", r_sepc(), r_stval(), *pte);
+    setkilled(p);
+  }
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -67,6 +96,8 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == STORE_PAGE_FAULT || r_scause() == LOAD_ACCESS_FAULT) {   
+    cowtrap();
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

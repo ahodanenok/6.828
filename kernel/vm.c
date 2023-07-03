@@ -308,7 +308,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -316,14 +315,21 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    if (*pte & PTE_W) {
+      *pte &= ~PTE_W;
+      *pte |= PTE_COW;
+    }
+
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
     }
+
+    if (*pte & PTE_COW) {
+      *walk(new, i, 0) |= PTE_COW;
+    }
+
+    krefinc((void*)pa);
   }
   return 0;
 
@@ -352,12 +358,26 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+    if(va0 >= MAXVA)
       return -1;
+
+    pte = walk(pagetable, va0, 0);
+    if (pte == 0)
+      return -1;
+
+    if (*pte & PTE_COW) {
+      pte = cowcow(pagetable, va0, pte);
+    }
+
+    pa0 = PTE2PA(*pte);
+    if(pa0 == 0) {
+      printf("copyout failed");
+      return -1;
+    }
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -436,4 +456,38 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+pte_t *
+cowcow(pagetable_t pagetable, uint64 va, pte_t *pte)
+{
+  if ((*pte & PTE_COW) == 0)
+    panic("cowcow: not a cow pte");
+
+  pte_t *ptenew;
+  uint64 pa = PTE2PA(*pte);
+  if (krefcnt((void *) pa) > 1) {
+    void* mem;  
+    if((mem = kalloc()) == 0) {
+      printf("cowcow: failed to allocate a page for cow pte\n");
+      return 0;
+    }
+
+    memmove(mem, (char*) pa, PGSIZE);
+  
+    uint flags = PTE_FLAGS(*pte) | PTE_W;
+    uvmunmap(pagetable, va, 1, 1);
+    if(mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
+      printf("cowcow: failed to mapmages for cow pte\n");
+      return 0;
+    }
+
+    ptenew = walk(pagetable, va, 0);
+  } else {
+    *pte |= PTE_W;
+    ptenew = pte;
+  }
+  *ptenew &= ~PTE_COW;
+
+  return ptenew;
 }
