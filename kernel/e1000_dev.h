@@ -103,7 +103,7 @@ struct tx_desc
   uint16 length;
   uint8 cso;
   uint8 cmd;
-  uint8 status;
+  uint8 status; // STA, RSV
   uint8 css;
   uint16 special;
 };
