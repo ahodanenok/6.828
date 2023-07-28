@@ -9,7 +9,9 @@
 #include "riscv.h"
 #include "defs.h"
 
-void freerange(void *pa_start, void *pa_end);
+static void *ktake(int hart);
+static void  kput(void *pa, int hart);
+static void *kborrow(int hart);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
@@ -19,24 +21,31 @@ struct run {
 };
 
 struct {
-  struct spinlock lock;
-  struct run *freelist;
+  struct spinlock lock[NCPU + 1];
+  struct run *freelist[NCPU + 1];
 } kmem;
+
+static char locknames[NCPU + 1][8] = {
+  "kmem.0", "kmem.1", "kmem.2", "kmem.3", "kmem.4", "kmem.5", "kmem.6","kmem.7", "kmem.8"
+};
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
-}
-
-void
-freerange(void *pa_start, void *pa_end)
-{
+  uint64 pa_start, hart_pages;
   char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
-    kfree(p);
+
+  initlock(&kmem.lock[0], locknames[0]);
+
+  pa_start = PGROUNDUP((uint64) end);
+  hart_pages = (PHYSTOP - pa_start) / (NCPU * PGSIZE);
+  p = (char *) pa_start;
+  for (int hart = 1; hart <= NCPU; hart++) {
+    for (int i = 0; i < hart_pages; i++) {
+      kput(p, hart);
+      p += PGSIZE;
+    }
+  }
 }
 
 // Free the page of physical memory pointed at by pa,
@@ -45,6 +54,55 @@ freerange(void *pa_start, void *pa_end)
 // initializing the allocator; see kinit above.)
 void
 kfree(void *pa)
+{
+  int hart;
+
+  push_off();
+  hart = cpuid();
+  pop_off();
+
+  kput(pa, hart);
+}
+
+// Allocate one 4096-byte page of physical memory.
+// Returns a pointer that the kernel can use.
+// Returns 0 if the memory cannot be allocated.
+void *
+kalloc(void)
+{
+  int hart;
+  void *p;
+
+  push_off();
+  hart = cpuid();
+  pop_off();
+
+  p = ktake(hart);
+  if (!p)
+    p = kborrow(hart);
+
+  if(p)
+    memset((char*)p, 5, PGSIZE); // fill with junk
+
+  return p;
+}
+
+static void *
+ktake(int hart)
+{
+  struct run *r;
+
+  acquire(&kmem.lock[hart]);
+  r = kmem.freelist[hart];
+  if(r)
+    kmem.freelist[hart] = r->next;
+  release(&kmem.lock[hart]);
+
+  return (void*)r;
+}
+
+static void
+kput(void *pa, int hart)
 {
   struct run *r;
 
@@ -56,27 +114,21 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  acquire(&kmem.lock[hart]);
+  r->next = kmem.freelist[hart];
+  kmem.freelist[hart] = r;
+  release(&kmem.lock[hart]);
 }
 
-// Allocate one 4096-byte page of physical memory.
-// Returns a pointer that the kernel can use.
-// Returns 0 if the memory cannot be allocated.
-void *
-kalloc(void)
+static void *
+kborrow(int hart)
 {
-  struct run *r;
+  void * p;
+  for (int i = 0; i <= NCPU; i++) {
+    if (i != hart && (p = ktake(i))) {
+      return p;
+    }
+  }
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
-  if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
-
-  if(r)
-    memset((char*)r, 5, PGSIZE); // fill with junk
-  return (void*)r;
+  return 0;
 }
