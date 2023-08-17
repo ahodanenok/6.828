@@ -65,3 +65,8 @@
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
+#define MMAP_PGCOUNT  (MMAP_COUNT * 10)
+#define MMAP_BASE     (TRAPFRAME - MMAP_PGCOUNT * PGSIZE)
+#define MMAP_END      TRAPFRAME
+#define MMAP_BLOCK(n) (MMAP_BASE + 10 * PGSIZE * (n))

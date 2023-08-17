@@ -169,6 +169,14 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  for (int i = 0; i < MMAP_COUNT; i++) {
+    p->maps[i].f = 0;
+    p->maps[i].addr = 0;
+    p->maps[i].len = 0;
+    p->maps[i].flags = 0;
+    p->maps[i].prot = 0;
+  }
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -212,6 +220,13 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+
+  for (uint64 a = MMAP_BASE; a < MMAP_END; a += PGSIZE) {
+    if (walkaddr(pagetable, a) > 0) {
+      uvmunmap(pagetable, a, 1, 0);
+    }
+  }
+
   uvmfree(pagetable, sz);
 }
 
@@ -296,6 +311,22 @@ fork(void)
   }
   np->sz = p->sz;
 
+  struct mm *mmfrom, *mmto;
+  for (int i = 0; i < MMAP_COUNT; i++) {
+    mmto = &np->maps[i];
+    mmfrom = &p->maps[i];
+
+    mmto->f = mmfrom->f;
+    mmto->addr = mmfrom->addr;
+    mmto->len = mmfrom->len;
+    mmto->prot = mmfrom->prot;
+    mmto->flags = mmfrom->flags;
+
+    if (mmto->f) {
+      filedup(mmto->f);
+    }
+  }
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -357,6 +388,13 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  for (int i = 0; i < MMAP_COUNT; i++) {
+    if (p->maps[i].f) {
+      fileclose(p->maps[i].f);
+      p->maps[i].f = 0;
     }
   }
 
